@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LCD/OLED 图片裁切取模工具</title>
+    <!-- 引入 Tailwind CSS 进行样式渲染 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 引入 React 和 ReactDOM -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <!-- 引入 Babel 实时编译 JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body class="bg-gray-50">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // 替换原本从 lucide-react 引入的图标，改为内联 SVG 以保证纯 HTML 运行
+        const Upload = ({ className }) => (<svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>);
+        const Copy = ({ className }) => (<svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>);
+        const Check = ({ className }) => (<svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>);
+        const Settings = ({ className }) => (<svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>);
+        const ImageIcon = ({ className }) => (<svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>);
+        const Crop = ({ className }) => (<svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M18 22V8a2 2 0 0 0-2-2H2"/></svg>);
+
+        function App() {
+          // 原始上传图片与裁切后的图片
+          const [rawImageSrc, setRawImageSrc] = useState(null);
+          const [croppedImageObj, setCroppedImageObj] = useState(null);
+          const [originalWidth, setOriginalWidth] = useState(0);
+          const [originalHeight, setOriginalHeight] = useState(0);
+          
+          // 取模配置状态 (第一版的固定属性)
+          const [targetWidth, setTargetWidth] = useState(128);
+          const [targetHeight, setTargetHeight] = useState(64);
+          const [threshold, setThreshold] = useState(128);
+          const [invert, setInvert] = useState(false); // 默认：黑色为1(亮)，白色为0(灭)
+          
+          // 裁切框状态
+          const [ratioX, setRatioX] = useState(128);
+          const [ratioY, setRatioY] = useState(64);
+          const [crop, setCrop] = useState({ x: 0, y: 0, w: 0, h: 0 });
+          const [imgDisplaySize, setImgDisplaySize] = useState({ w: 0, h: 0 });
+          const [dragState, setDragState] = useState(null); // 'move' 或 'resize-se'
+          const [startPos, setStartPos] = useState({ x: 0, y: 0, crop: null });
+          
+          const [hexCode, setHexCode] = useState('');
+          const [copied, setCopied] = useState(false);
+
+          const imgRef = useRef(null);
+          const cropRef = useRef(crop);
+          const processCanvasRef = useRef(null);
+          const previewCanvasRef = useRef(null);
+
+          // 保持 cropRef 与状态同步，供在外部回调或 Effect 中使用最新值
+          useEffect(() => {
+            cropRef.current = crop;
+          }, [crop]);
+
+          // ================= 1. 图片上传 =================
+          const handleImageUpload = (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = (event) => {
+              setRawImageSrc(event.target.result);
+            };
+            reader.readAsDataURL(file);
+          };
+
+          // ================= 2. 裁切器核心逻辑 =================
+          const onImageLoad = (e) => {
+            const img = e.target;
+            setImgDisplaySize({ w: img.width, h: img.height });
+            initCropBox(img.width, img.height, ratioX, ratioY);
+          };
+
+          const initCropBox = (imgW, imgH, rX, rY) => {
+            if (!imgW || !imgH || !rX || !rY) return;
+            const ratio = rX / rY;
+            let w = imgW;
+            let h = w / ratio;
+            if (h > imgH) {
+              h = imgH;
+              w = h * ratio;
+            }
+            const newCrop = {
+              x: (imgW - w) / 2,
+              y: (imgH - h) / 2,
+              w: w,
+              h: h
+            };
+            setCrop(newCrop);
+            cropRef.current = newCrop;
+            applyCrop();
+          };
+
+          useEffect(() => {
+            if (imgDisplaySize.w > 0) {
+              initCropBox(imgDisplaySize.w, imgDisplaySize.h, ratioX, ratioY);
+            }
+          }, [ratioX, ratioY, imgDisplaySize]);
+
+          const handlePointerDown = (e, type) => {
+            e.preventDefault();
+            setDragState(type);
+            setStartPos({ x: e.clientX, y: e.clientY, crop: { ...crop } });
+          };
+
+          useEffect(() => {
+            if (!dragState) return;
+
+            const handlePointerMove = (e) => {
+              const img = imgRef.current;
+              if (!img) return;
+
+              const dx = e.clientX - startPos.x;
+              const dy = e.clientY - startPos.y;
+              let newCrop = { ...startPos.crop };
+
+              if (dragState === 'move') {
+                newCrop.x = Math.max(0, Math.min(img.width - newCrop.w, startPos.crop.x + dx));
+                newCrop.y = Math.max(0, Math.min(img.height - newCrop.h, startPos.crop.y + dy));
+              } else if (dragState === 'resize-se') {
+                const ratio = ratioX / ratioY;
+                let newW = startPos.crop.w + dx;
+                let newH = newW / ratio;
+
+                if (startPos.crop.x + newW > img.width) {
+                  newW = img.width - startPos.crop.x;
+                  newH = newW / ratio;
+                }
+                if (startPos.crop.y + newH > img.height) {
+                  newH = img.height - startPos.crop.y;
+                  newW = newH * ratio;
+                }
+                if (newW < 20 || newH < 20) {
+                   newW = Math.max(20, 20 * ratio);
+                   newH = newW / ratio;
+                }
+
+                newCrop.w = newW;
+                newCrop.h = newH;
+              }
+              setCrop(newCrop);
+            };
+
+            const handlePointerUp = () => {
+              setDragState(null);
+            };
+
+            window.addEventListener('pointermove', handlePointerMove);
+            window.addEventListener('pointerup', handlePointerUp);
+            return () => {
+              window.removeEventListener('pointermove', handlePointerMove);
+              window.removeEventListener('pointerup', handlePointerUp);
+            };
+          }, [dragState, startPos, ratioX, ratioY]);
+
+          useEffect(() => {
+            if (dragState === null && rawImageSrc) {
+              applyCrop();
+            }
+          }, [dragState]);
+
+          const applyCrop = () => {
+            const img = imgRef.current;
+            if (!img) return;
+
+            const scaleX = img.naturalWidth / img.width;
+            const scaleY = img.naturalHeight / img.height;
+            
+            const currCrop = cropRef.current;
+            const cw = currCrop.w * scaleX;
+            const ch = currCrop.h * scaleY;
+
+            if (cw <= 0 || ch <= 0) return;
+
+            const canvas = document.createElement('canvas');
+            canvas.width = cw;
+            canvas.height = ch;
+            const ctx = canvas.getContext('2d');
+            
+            ctx.drawImage(
+              img,
+              currCrop.x * scaleX, currCrop.y * scaleY, cw, ch,
+              0, 0, cw, ch
+            );
+
+            const croppedImg = new Image();
+            croppedImg.onload = () => {
+              setCroppedImageObj(croppedImg);
+              setOriginalWidth(Math.round(cw));
+              setOriginalHeight(Math.round(ch));
+            };
+            croppedImg.src = canvas.toDataURL();
+          };
+
+          const syncRatioToTarget = () => {
+            setRatioX(targetWidth);
+            setRatioY(targetHeight);
+          };
+
+          // ================= 3. 取模核心逻辑 (第一版) =================
+          useEffect(() => {
+            if (!croppedImageObj) return;
+            generateModData();
+          }, [croppedImageObj, targetWidth, targetHeight, threshold, invert]);
+
+          const generateModData = () => {
+            const processCanvas = processCanvasRef.current;
+            const previewCanvas = previewCanvasRef.current;
+            if (!processCanvas || !previewCanvas) return;
+
+            const pCtx = processCanvas.getContext('2d', { willReadFrequently: true });
+            const prevCtx = previewCanvas.getContext('2d');
+
+            const w = parseInt(targetWidth) || 1;
+            const h = parseInt(targetHeight) || 1;
+
+            processCanvas.width = w;
+            processCanvas.height = h;
+            previewCanvas.width = w;
+            previewCanvas.height = h;
+
+            pCtx.fillStyle = '#FFFFFF';
+            pCtx.fillRect(0, 0, w, h);
+            pCtx.drawImage(croppedImageObj, 0, 0, w, h);
+
+            const imageData = pCtx.getImageData(0, 0, w, h);
+            const data = imageData.data;
+            const previewImageData = new ImageData(w, h);
+            const prevData = previewImageData.data;
+
+            let hexArray = [];
+            const pages = Math.ceil(h / 8);
+
+            for (let i = 0; i < data.length; i += 4) {
+              const r = data[i];
+              const g = data[i + 1];
+              const b_color = data[i + 2];
+              const a = data[i + 3];
+
+              let gray = 255; 
+              if (a > 128) {
+                gray = 0.299 * r + 0.587 * g + 0.114 * b_color;
+              }
+
+              const isBlack = gray < threshold;
+              const isActive = invert ? !isBlack : isBlack; 
+
+              const colorVal = isActive ? (invert ? 255 : 0) : (invert ? 0 : 255);
+              prevData[i] = colorVal;
+              prevData[i + 1] = colorVal;
+              prevData[i + 2] = colorVal;
+              prevData[i + 3] = 255;
+            }
+            prevCtx.putImageData(previewImageData, 0, 0);
+
+            // 第一版规则取模：纵向8点，高位在下，先左后右，先上后下
+            for (let p = 0; p < pages; p++) {
+              for (let x = 0; x < w; x++) {
+                let byte = 0;
+                for (let bit = 0; bit < 8; bit++) {
+                  const y = p * 8 + bit;
+                  if (y < h) {
+                    const idx = (y * w + x) * 4;
+                    const r = prevData[idx];
+                    const isActive = invert ? (r === 255) : (r === 0);
+                    
+                    if (isActive) {
+                      byte |= (1 << bit); // 高位在下
+                    }
+                  }
+                }
+                hexArray.push('0x' + byte.toString(16).padStart(2, '0').toUpperCase());
+              }
+            }
+
+            let formatted = `/* \n * 图像尺寸: ${w} x ${h} \n * 取模方式: 纵向8点，高位在下，先从左到右，再从上到下 \n * 像素反转: ${invert ? '是 (白点为1)' : '否 (黑点为1)'} \n */\n`;
+            formatted += `const unsigned char code img_data[] = {\n`;
+            
+            for (let i = 0; i < hexArray.length; i += 16) {
+              formatted += '    ' + hexArray.slice(i, i + 16).join(', ') + ',\n';
+            }
+            formatted += `};\n`;
+            
+            setHexCode(formatted);
+          };
+
+          const copyToClipboard = () => {
+            if (!hexCode) return;
+            const textArea = document.createElement("textarea");
+            textArea.value = hexCode;
+            document.body.appendChild(textArea);
+            textArea.select();
+            try {
+              document.execCommand('copy');
+              setCopied(true);
+              setTimeout(() => setCopied(false), 2000);
+            } catch (err) { }
+            document.body.removeChild(textArea);
+          };
+
+          return (
+            <div className="min-h-screen p-6 text-gray-800 font-sans">
+              <div className="max-w-6xl mx-auto space-y-6">
+                
+                {/* 顶部标题 */}
+                <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex items-center gap-3">
+                  <ImageIcon className="text-blue-500 w-8 h-8" />
+                  <div>
+                    <h1 className="text-2xl font-bold text-gray-900">LCD/OLED 图片裁切取模工具</h1>
+                    <p className="text-sm text-gray-500 mt-1">
+                      配置规则：C51格式 | 纵向8点 | 高位在下 | 先从左到右，再从上到下
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {/* 左侧控制面板与裁切区 */}
+                  <div className="space-y-6">
+                    
+                    {/* 1. 上传与裁切 */}
+                    <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 space-y-4">
+                      <h3 className="text-sm font-semibold flex items-center gap-2 border-b pb-2">
+                        <Crop className="w-4 h-4" /> 1. 上传与裁切
+                      </h3>
+                      
+                      {!rawImageSrc ? (
+                        <div className="relative border-2 border-dashed border-gray-300 rounded-lg p-8 hover:border-blue-500 transition-colors cursor-pointer flex flex-col items-center justify-center bg-gray-50">
+                          <input 
+                            type="file" accept="image/*" onChange={handleImageUpload}
+                            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                          />
+                          <Upload className="w-8 h-8 text-gray-400 mb-2" />
+                          <span className="text-sm text-gray-500">点击或拖拽图片到此处上传</span>
+                        </div>
+                      ) : (
+                        <div className="space-y-4">
+                          <div className="flex items-center gap-3 text-sm">
+                            <span className="text-gray-500">裁切比例:</span>
+                            <input 
+                              type="number" value={ratioX} onChange={e => setRatioX(Math.max(1, e.target.value))}
+                              className="w-16 border rounded px-2 py-1 text-center"
+                            />
+                            <span>:</span>
+                            <input 
+                              type="number" value={ratioY} onChange={e => setRatioY(Math.max(1, e.target.value))}
+                              className="w-16 border rounded px-2 py-1 text-center"
+                            />
+                            <button 
+                              onClick={syncRatioToTarget}
+                              className="ml-auto text-xs bg-blue-50 text-blue-600 px-3 py-1.5 rounded hover:bg-blue-100"
+                            >
+                              同步目标尺寸
+                            </button>
+                            <button 
+                              onClick={() => { setRawImageSrc(null); setCroppedImageObj(null); }}
+                              className="text-xs text-red-500 hover:text-red-700 underline"
+                            >
+                              重新上传
+                            </button>
+                          </div>
+
+                          <div className="relative w-full bg-[url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4IiBoZWlnaHQ9IjgiPgo8cmVjdCB3aWR0aD0iNCIgaGVpZ2h0PSI0IiBmaWxsPSIjZWVlIi8+CjxyZWN0IHg9IjQiIHk9IjQiIHdpZHRoPSI0IiBoZWlnaHQ9IjQiIGZpbGw9IiNlZWUiLz4KPC9zdmc+')] rounded overflow-hidden flex justify-center border border-gray-200 touch-none select-none">
+                            <div className="relative inline-block">
+                              <img 
+                                ref={imgRef}
+                                src={rawImageSrc} 
+                                alt="Raw" 
+                                onLoad={onImageLoad}
+                                className="block max-w-full max-h-[400px] pointer-events-none" 
+                                draggable={false}
+                              />
+                              {imgDisplaySize.w > 0 && (
+                                <div 
+                                  className="absolute border-2 border-blue-500 cursor-move"
+                                  style={{
+                                    left: crop.x, top: crop.y, width: crop.w, height: crop.h,
+                                    boxShadow: '0 0 0 9999px rgba(0,0,0,0.6)'
+                                  }}
+                                  onPointerDown={(e) => handlePointerDown(e, 'move')}
+                                >
+                                  <div className="absolute inset-0 grid grid-cols-3 grid-rows-3 pointer-events-none">
+                                    <div className="border-r border-b border-white/30" /><div className="border-r border-b border-white/30" /><div className="border-b border-white/30" />
+                                    <div className="border-r border-b border-white/30" /><div className="border-r border-b border-white/30" /><div className="border-b border-white/30" />
+                                    <div className="border-r border-white/30" /><div className="border-r border-white/30" /><div />
+                                  </div>
+                                  <div 
+                                    className="absolute -bottom-2 -right-2 w-5 h-5 bg-blue-500 border-2 border-white rounded-full cursor-se-resize shadow-md"
+                                    onPointerDown={(e) => { e.stopPropagation(); handlePointerDown(e, 'resize-se'); }}
+                                  />
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 2. 取模参数设置 */}
+                    <div className={`bg-white p-6 rounded-xl shadow-sm border border-gray-100 space-y-4 ${!croppedImageObj && 'opacity-50 pointer-events-none'}`}>
+                      <h3 className="text-sm font-semibold flex items-center gap-2 border-b pb-2">
+                        <Settings className="w-4 h-4" /> 2. 取模参数 (第一版固定规则)
+                      </h3>
+                      
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-xs text-gray-500 mb-1">目标宽度 (px)</label>
+                          <input 
+                            type="number" value={targetWidth} onChange={(e) => setTargetWidth(e.target.value)}
+                            className="w-full border rounded-md px-3 py-2 text-sm focus:ring-blue-500 focus:border-blue-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-gray-500 mb-1">目标高度 (px)</label>
+                          <input 
+                            type="number" value={targetHeight} onChange={(e) => setTargetHeight(e.target.value)}
+                            className="w-full border rounded-md px-3 py-2 text-sm focus:ring-blue-500 focus:border-blue-500"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-1 flex justify-between">
+                          <span>二值化阈值</span>
+                          <span>{threshold}</span>
+                        </label>
+                        <input 
+                          type="range" min="0" max="255" value={threshold} onChange={(e) => setThreshold(e.target.value)}
+                          className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                        />
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <input 
+                          type="checkbox" id="invertCheck" checked={invert} onChange={(e) => setInvert(e.target.checked)}
+                          className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+                        />
+                        <label htmlFor="invertCheck" className="text-sm text-gray-700 cursor-pointer">
+                          反色 (默认黑点为1，勾选后白点为1)
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 右侧：预览与代码区 */}
+                  <div className="space-y-6 flex flex-col">
+                    
+                    <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 shrink-0">
+                      <h3 className="text-sm font-semibold mb-4">实时预览 (二值化后)</h3>
+                      <div className="bg-gray-800 rounded-lg p-4 flex items-center justify-center min-h-[160px] overflow-auto">
+                        {!croppedImageObj ? (
+                          <span className="text-gray-500 text-sm">请上传图片并调整裁切区</span>
+                        ) : (
+                          <div className="bg-white shadow-inner p-1">
+                            <canvas ref={processCanvasRef} className="hidden" />
+                            <canvas 
+                              ref={previewCanvasRef} 
+                              style={{ 
+                                imageRendering: 'pixelated', 
+                                width: targetWidth > 200 ? '100%' : `${targetWidth * 2}px`, 
+                                maxWidth: '100%',
+                                height: 'auto' 
+                              }} 
+                            />
+                          </div>
+                        )}
+                      </div>
+                      {croppedImageObj && (
+                        <p className="text-xs text-gray-400 mt-2 text-center">
+                          裁切原始大小: {originalWidth}x{originalHeight} | 生成目标大小: {targetWidth}x{targetHeight}
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex flex-col flex-grow">
+                      <div className="flex items-center justify-between mb-4 shrink-0">
+                        <h3 className="text-sm font-semibold">生成的数据 (C51 格式)</h3>
+                        <button
+                          onClick={copyToClipboard} disabled={!hexCode}
+                          className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md transition-colors ${
+                            !hexCode ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : copied ? 'bg-green-100 text-green-700' : 'bg-blue-50 text-blue-600 hover:bg-blue-100'
+                          }`}
+                        >
+                          {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                          {copied ? '已复制' : '复制代码'}
+                        </button>
+                      </div>
+                      
+                      <textarea
+                        readOnly value={hexCode || '等待处理...'}
+                        className="w-full flex-grow min-h-[300px] p-4 bg-gray-50 border border-gray-200 rounded-lg font-mono text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                        placeholder="/* 数据将在这里生成 */"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        }
+
+        // 渲染 React 应用
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
